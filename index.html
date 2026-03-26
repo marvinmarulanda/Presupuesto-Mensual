@@ -83,7 +83,7 @@ function Bar({spent,budget}) {
   );
 }
 
-export default function App() {
+function App() {
   // ── TODOS LOS HOOKS PRIMERO ──────────────────────────────────────────────
   const [data,       setData]      = useState(()=>loadData());
   const [curY,       setCurY]      = useState(()=>NOW().y);
@@ -173,7 +173,7 @@ export default function App() {
   const tryClose = ()=>{ if(dirty){setWarnClose(true);}else{doClose();} };
   const doClose  = ()=>{ setModal(null);setShowEmoji(false);setDirty(false);setWarnClose(false); };
 
-  const d = setter => val => { setter(val); setDirty(true); };
+  const markDirty = setter => val => { setter(val); setDirty(true); };
 
   const openAddExp = catId => {
     setFCatId(catId||data.categories[0]?.id||"");
@@ -638,8 +638,8 @@ export default function App() {
         )}
         <div>{lbl("Categoría")}<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{data.categories.map(c=>chip(`${c.emoji} ${c.name}`,fCatId===c.id,()=>{setFCatId(c.id);setFItemId("");setDirty(true);}))}</div></div>
         {selCatItems.length>0&&<div>{lbl("Ítem (opcional)")}<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{chip("General",fItemId==="",()=>{setFItemId("");setDirty(true);})}{selCatItems.map(i=>chip(i.name,fItemId===i.id,()=>{setFItemId(i.id);setDirty(true);}))}</div></div>}
-        <div>{lbl("Descripción")}{sinp(fDesc,d(setFDesc),"¿En qué fue?")}</div>
-        {minp(fAmt,d(setFAmt),fInst>1?"Valor de cada cuota":"Monto")}
+        <div>{lbl("Descripción")}{sinp(fDesc,markDirty(setFDesc),"¿En qué fue?")}</div>
+        {minp(fAmt,markDirty(setFAmt),fInst>1?"Valor de cada cuota":"Monto")}
         <div>
           {lbl("Fecha")}
           <input type="date" value={fDate} onChange={e=>{setFDate(e.target.value);setDirty(true);}}
@@ -659,7 +659,7 @@ export default function App() {
             )}
           </div>
         )}
-        <div>{lbl("Nota (opcional)")}{sinp(fNote,d(setFNote),"Ej: compra del mes, regalo, etc.")}</div>
+        <div>{lbl("Nota (opcional)")}{sinp(fNote,markDirty(setFNote),"Ej: compra del mes, regalo, etc.")}</div>
         {pb("Guardar",saveExp,fIncome?C.green:C.accent)}
       </React.Fragment>
     ))}
