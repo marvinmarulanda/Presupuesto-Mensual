@@ -175,7 +175,8 @@ function App() {
   const monthIncomes = useMemo(()=>(data.incomes&&data.incomes[mk])||[],[data,mk]);
   const curSal = useMemo(()=>{
     if(monthIncomes.length>0) return monthIncomes.reduce((s,i)=>s+i.amount,0);
-    return (data.salaries&&data.salaries[mk])?data.salaries[mk]:(data.salary||0);
+    // Solo usar el salario del mes específico, nunca el global
+    return (data.salaries&&data.salaries[mk])?data.salaries[mk]:0;
   },[data,mk,monthIncomes]);
 
   const totSpent  = useMemo(()=>mExp.filter(e=>!e.isIncome).reduce((s,e)=>s+e.amount,0),[mExp]);
