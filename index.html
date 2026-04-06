@@ -162,6 +162,7 @@ function App() {
   const [incName,  setIncName]  = useState("");
   const [incAmt,   setIncAmt]   = useState("");
   const [incEditId,setIncEditId]= useState(null);
+  const [histSubTab, setHistSubTab] = useState("6m"); // "6m" | "anual"
 
   useEffect(()=>{saveData(data);},[data]);
   const upd = useCallback(fn=>setData(d=>fn(JSON.parse(JSON.stringify(d)))),[]);
@@ -205,6 +206,19 @@ function App() {
       .map(c=>({...c,spent:catSpent(c.id),bud:catBud(c),excess:catSpent(c.id)-catBud(c)})),
   [data,mExp]);
   const totalExcess = useMemo(()=>exceededCats.reduce((s,c)=>s+c.excess,0),[exceededCats]);
+  const faltaCubrir = useMemo(()=>Math.max(budRem,0)+totalExcess,[budRem,totalExcess]);
+  const ahorroReal  = useMemo(()=>curSal-totSpent,[curSal,totSpent]);
+
+  // Datos anuales — 12 meses del año actual
+  const annual12 = useMemo(()=>Array.from({length:12},(_,m)=>{
+    const k=mKey(curY,m);
+    const spent   = data.expenses.filter(e=>e.date.startsWith(k)&&!e.isIncome).reduce((s,e)=>s+e.amount,0);
+    const incs    = (data.incomes&&data.incomes[k])||[];
+    const income  = incs.length>0 ? incs.reduce((s,i)=>s+i.amount,0) : ((data.salaries&&data.salaries[k])||0);
+    const ahorro  = income - spent;
+    return {label:MES[m].slice(0,3), key:k, spent, income, ahorro, isCur:k===mk};
+  }),[data,curY,mk]);
+  const maxAnnual = useMemo(()=>Math.max(...annual12.map(h=>h.spent),1),[annual12]);
 
   const dayProg = useMemo(()=>{
     const t=new Date(); if(t.getFullYear()!==curY||t.getMonth()!==curM) return null;
@@ -464,10 +478,12 @@ function App() {
               {/* Grid métricas */}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,background:C.border}}>
                 {[
-                  {icon:"💰",l:"Mis ingresos",    v:curSal,           c:C.green,  s:monthIncomes.length>0?`${monthIncomes.length} fuentes`:"Toca para editar",fn:()=>setModal("incomes")},
-                  {icon:"💸",l:"Total gastado",   v:totSpent,          c:C.red,    s:null,fn:null},
-                  {icon:"📋",l:"Presupuestado",   v:totBudget,         c:C.accent, s:`${budgetPct}% ejecutado`,fn:null},
-                  {icon:"📊",l:"Presup. restante",v:Math.abs(budRem),  c:budRem>=0?C.green:C.red,s:budRem<0?"⚠️ Excedido":null,fn:null},
+                  {icon:"💰",l:"Mis ingresos",    v:curSal,              c:C.green,  s:monthIncomes.length>0?`${monthIncomes.length} fuentes`:"Toca para editar",fn:()=>setModal("incomes")},
+                  {icon:"💸",l:"Total gastado",   v:totSpent,             c:C.red,    s:null,fn:null},
+                  {icon:"📋",l:"Presupuestado",   v:totBudget,            c:C.accent, s:`${budgetPct}% ejecutado`,fn:null},
+                  {icon:"📊",l:"Presup. restante",v:Math.abs(budRem),     c:budRem>=0?C.green:C.red, s:budRem<0?"⚠️ Excedido":null,fn:null},
+                  {icon:"🎯",l:"Falta cubrir",    v:faltaCubrir,          c:faltaCubrir>0?C.amber:C.green, s:"Restante + excedido",fn:null},
+                  {icon:"🏦",l:"Ahorro real",     v:Math.abs(ahorroReal), c:ahorroReal>=0?C.green:C.red, s:ahorroReal<0?"Gastaste más de lo que ingresaste":"Lo que queda en tu bolsillo",fn:null},
                 ].map(x=>(
                   <button key={x.l} onClick={x.fn||undefined} style={{background:C.card,padding:"14px 12px",textAlign:"left",border:`1px solid ${C.border}`,cursor:x.fn?"pointer":"default",display:"flex",flexDirection:"column",gap:5}}>
                     <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{fontSize:14}}>{x.icon}</span><span style={{color:C.t3,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em"}}>{x.l}</span></div>
@@ -654,30 +670,71 @@ function App() {
         {/* ─── TAB HISTORIAL ──────────────────────────────────────────────── */}
         {tab==="history"&&(
           <div style={{padding:"12px 16px"}}>
+
+            {/* Gráfica anual */}
             <div style={{background:C.card,borderRadius:18,padding:20,border:`1px solid ${C.border}`,boxShadow:C.shadowSm,marginBottom:12}}>
-              {lbl("Gastos — últimos 6 meses")}
-              <div style={{display:"flex",alignItems:"flex-end",gap:8,height:120,margin:"16px 0 20px"}}>
-                {hist6.map(h=>{
-                  const pct=(h.total/maxH)*100,abbr=h.total>999999?`${(h.total/1e6).toFixed(1)}M`:h.total>999?`${Math.round(h.total/1000)}K`:"";
+              {lbl(`Gastos por mes — ${curY}`)}
+              <div style={{display:"flex",alignItems:"flex-end",gap:4,height:100,margin:"14px 0 16px"}}>
+                {annual12.map(h=>{
+                  const pct=(h.spent/maxAnnual)*100,abbr=h.spent>999999?`${(h.spent/1e6).toFixed(1)}M`:h.spent>999?`${Math.round(h.spent/1000)}K`:"";
                   return(
-                    <div key={h.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-                      {h.total>0&&<div style={{color:C.t3,fontSize:10}}>{abbr}</div>}
-                      <div style={{width:"100%",display:"flex",alignItems:"flex-end",height:80}}>
-                        <div style={{width:"100%",borderRadius:"8px 8px 0 0",height:`${Math.max(pct,h.total>0?4:0)}%`,background:h.isCur?C.accent:C.card2,border:`1px solid ${h.isCur?C.accent:C.border}`,boxShadow:h.isCur?`0 2px 8px ${C.accent}44`:"none"}}/>
+                    <div key={h.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                      {h.spent>0&&<div style={{color:C.t3,fontSize:8}}>{abbr}</div>}
+                      <div style={{width:"100%",display:"flex",alignItems:"flex-end",height:70}}>
+                        <div style={{width:"100%",borderRadius:"5px 5px 0 0",height:`${Math.max(pct,h.spent>0?4:0)}%`,background:h.isCur?C.accent:C.card2,border:`1px solid ${h.isCur?C.accent:C.border}`}}/>
                       </div>
-                      <span style={{color:h.isCur?C.accent:C.t3,fontSize:11,fontWeight:h.isCur?700:400}}>{h.label}</span>
+                      <span style={{color:h.isCur?C.accent:C.t3,fontSize:8,fontWeight:h.isCur?700:400}}>{h.label}</span>
                     </div>
                   );
                 })}
               </div>
-              {[...hist6].reverse().map(h=>(
-                <div key={h.key} style={{display:"flex",alignItems:"center",gap:11,marginBottom:10,padding:"8px 12px",background:h.isCur?C.accentBg:C.card2,borderRadius:12,border:`1px solid ${h.isCur?C.accent+"44":C.border}`}}>
-                  <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:h.isCur?C.accent:C.border}}/>
-                  <span style={{color:h.isCur?C.accent:C.t2,fontSize:14,flex:1,fontWeight:h.isCur?700:400}}>{MES[parseInt(h.key.split("-")[1])-1]} {h.key.split("-")[0]}</span>
-                  <span style={{color:h.isCur?C.accent:C.t1,fontWeight:700,fontSize:14}}>{h.total>0?`$${fmt(h.total)}`:"—"}</span>
-                </div>
-              ))}
             </div>
+
+            {/* Tabla mes a mes */}
+            <div style={{background:C.card,borderRadius:18,padding:20,border:`1px solid ${C.border}`,boxShadow:C.shadowSm,marginBottom:12}}>
+              {lbl(`Resumen anual — ${curY}`)}
+              {/* Cabecera */}
+              <div style={{display:"grid",gridTemplateColumns:"0.7fr 1fr 1fr 1fr",gap:4,marginBottom:8,padding:"6px 8px",borderBottom:`1px solid ${C.border}`}}>
+                {["Mes","Gastado","Ahorro real","Excedido"].map((h,i)=>(
+                  <div key={h} style={{color:C.t3,fontSize:9,fontWeight:700,textTransform:"uppercase",textAlign:i===0?"left":"right"}}>{h}</div>
+                ))}
+              </div>
+              {annual12.map(h=>{
+                const mExps=data.expenses.filter(e=>e.date.startsWith(h.key)&&!e.isIncome);
+                const excedido=data.categories.reduce((s,cat)=>{
+                  const bud=catBud(cat); if(bud<=0) return s;
+                  const sp=mExps.filter(e=>e.catId===cat.id).reduce((ss,e)=>ss+e.amount,0);
+                  return sp>bud?s+(sp-bud):s;
+                },0);
+                const hasData=h.spent>0||h.income>0;
+                return(
+                  <div key={h.key} style={{display:"grid",gridTemplateColumns:"0.7fr 1fr 1fr 1fr",gap:4,padding:"9px 8px",marginBottom:4,background:h.isCur?C.accentBg:hasData?C.card2:"transparent",borderRadius:10,border:`1px solid ${h.isCur?C.accent+"44":hasData?C.border:"transparent"}`}}>
+                    <div style={{color:h.isCur?C.accent:C.t1,fontWeight:h.isCur?700:500,fontSize:12}}>{h.label}</div>
+                    <div style={{color:h.spent>0?C.red:C.t3,fontWeight:600,fontSize:11,textAlign:"right"}}>{h.spent>0?`$${fmt(h.spent)}`:"—"}</div>
+                    <div style={{color:!hasData?C.t3:h.ahorro>=0?C.green:C.red,fontWeight:700,fontSize:11,textAlign:"right"}}>{hasData?(h.ahorro>=0?`$${fmt(h.ahorro)}`:`-$${fmt(Math.abs(h.ahorro))}`):"—"}</div>
+                    <div style={{color:excedido>0?C.red:C.t3,fontWeight:700,fontSize:11,textAlign:"right"}}>{excedido>0?`-$${fmt(excedido)}`:"—"}</div>
+                  </div>
+                );
+              })}
+              {/* Totales */}
+              {(()=>{
+                const totGastado=annual12.reduce((s,h)=>s+h.spent,0);
+                const totAhorro=annual12.reduce((s,h)=>s+h.ahorro,0);
+                const totExc=annual12.reduce((s,h)=>{
+                  const mExps2=data.expenses.filter(e=>e.date.startsWith(h.key)&&!e.isIncome);
+                  return s+data.categories.reduce((ss,cat)=>{const bud=catBud(cat);if(bud<=0)return ss;const sp=mExps2.filter(e=>e.catId===cat.id).reduce((sss,e)=>sss+e.amount,0);return sp>bud?ss+(sp-bud):ss;},0);
+                },0);
+                return(
+                  <div style={{display:"grid",gridTemplateColumns:"0.7fr 1fr 1fr 1fr",gap:4,padding:"10px 8px",marginTop:8,background:C.accentBg,borderRadius:12,border:`1px solid ${C.accent}44`}}>
+                    <div style={{color:C.accent,fontWeight:800,fontSize:12}}>Total</div>
+                    <div style={{color:C.red,fontWeight:800,fontSize:11,textAlign:"right"}}>${fmt(totGastado)}</div>
+                    <div style={{color:totAhorro>=0?C.green:C.red,fontWeight:800,fontSize:11,textAlign:"right"}}>{totAhorro>=0?`$${fmt(totAhorro)}`:`-$${fmt(Math.abs(totAhorro))}`}</div>
+                    <div style={{color:totExc>0?C.red:C.t3,fontWeight:800,fontSize:11,textAlign:"right"}}>{totExc>0?`-$${fmt(totExc)}`:"—"}</div>
+                  </div>
+                );
+              })()}
+            </div>
+
           </div>
         )}
 
