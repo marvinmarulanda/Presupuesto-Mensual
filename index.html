@@ -93,6 +93,16 @@ function migrate(raw) {
 const loadData = () => { try{const r=localStorage.getItem(STORAGE_KEY);if(r)return migrate(JSON.parse(r));}catch(_){} return migrate(null); };
 const saveData = d => { try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d));}catch(_){} };
 
+// Retorna el presupuesto vigente de un ítem para un mes dado
+// Busca en budgetHistory el valor más reciente <= mk, si no hay usa budget original
+const getItemBudget = (item, forMk) => {
+  const hist = item.budgetHistory;
+  if (!hist || Object.keys(hist).length === 0) return item.budget || 0;
+  const keys = Object.keys(hist).filter(k => k <= forMk).sort();
+  if (keys.length === 0) return item.budget || 0;
+  return hist[keys[keys.length - 1]];
+};
+
 // Exportar CSV
 function exportCSV(expenses, categories, mk, mes) {
   const cats = {};
@@ -181,12 +191,12 @@ function App() {
   },[data,mk,monthIncomes]);
 
   const totSpent  = useMemo(()=>mExp.filter(e=>!e.isIncome).reduce((s,e)=>s+e.amount,0),[mExp]);
-  const totBudget = useMemo(()=>data.categories.reduce((s,c)=>s+(c.items||[]).reduce((si,i)=>si+(i.budget||0),0),0),[data]);
+  const totBudget = useMemo(()=>data.categories.reduce((s,c)=>s+(c.items||[]).reduce((si,i)=>si+getItemBudget(i,mk),0),0),[data,mk]);
   const budRem    = useMemo(()=>totBudget-totSpent,[totBudget,totSpent]);
   const salRem    = useMemo(()=>curSal-totSpent,[curSal,totSpent]);
   const catSpent  = useCallback(id=>mExp.filter(e=>e.catId===id&&!e.isIncome).reduce((s,e)=>s+e.amount,0),[mExp]);
   const itemSpent = useCallback(id=>mExp.filter(e=>e.itemId===id&&!e.isIncome).reduce((s,e)=>s+e.amount,0),[mExp]);
-  const catBud    = useCallback(c=>(c.items||[]).reduce((s,i)=>s+(i.budget||0),0),[]);
+  const catBud    = useCallback((c, forMk) => (c.items||[]).reduce((s,i)=>s+getItemBudget(i, forMk||mk),0),[mk]);
 
   // Comparativo mes anterior
   const prevTotSpent = useMemo(()=>prevExp.filter(e=>!e.isIncome).reduce((s,e)=>s+e.amount,0),[prevExp]);
@@ -279,7 +289,8 @@ function App() {
   };
   const openEditCat = cat => {
     setCId(cat.id); setCName(cat.name); setCEmoji(cat.emoji); setCColor(cat.color||"blue");
-    setCItems(JSON.parse(JSON.stringify(cat.items||[])));
+    // Mostrar el presupuesto vigente del mes actual para cada ítem
+    setCItems(JSON.parse(JSON.stringify(cat.items||[])).map(i=>({...i, budget: getItemBudget(i, mk)})));
     setNIName(""); setNIBudget(""); setShowEmoji(false); setModal("cat");
   };
   const openAddIncome = () => { setIncName(""); setIncAmt(""); setIncEditId(null); setShowIncModal(true); };
@@ -330,8 +341,35 @@ function App() {
 
   const saveCat = ()=>{
     if(!cName) return;
-    if(cId) upd(d=>{const c=d.categories.find(x=>x.id===cId);if(c){c.name=cName;c.emoji=cEmoji;c.color=cColor;c.items=cItems;}return d;});
-    else    upd(d=>{d.categories.push({id:uid(),name:cName,emoji:cEmoji,color:cColor,items:cItems});return d;});
+    if(cId) upd(d=>{
+      const c=d.categories.find(x=>x.id===cId);
+      if(c){
+        c.name=cName; c.emoji=cEmoji; c.color=cColor;
+        // Actualizar ítems: guardar nuevo presupuesto en budgetHistory[mk]
+        // Los ítems nuevos (no existían antes) se agregan normalmente
+        c.items = cItems.map(editedItem => {
+          const existing = c.items.find(x=>x.id===editedItem.id);
+          if(existing){
+            // Ítem existente: guardar presupuesto en historial del mes actual
+            if(!existing.budgetHistory) existing.budgetHistory = {};
+            existing.budgetHistory[mk] = editedItem.budget;
+            existing.name = editedItem.name;
+            return existing;
+          } else {
+            // Ítem nuevo: presupuesto directo sin historial previo
+            return {...editedItem, budgetHistory: {[mk]: editedItem.budget}};
+          }
+        });
+      }
+      return d;
+    });
+    else upd(d=>{
+      d.categories.push({
+        id:uid(), name:cName, emoji:cEmoji, color:cColor,
+        items: cItems.map(i=>({...i, budget: i.budget, budgetHistory:{[mk]: i.budget}}))
+      });
+      return d;
+    });
     doClose();
   };
 
@@ -702,7 +740,7 @@ function App() {
               {annual12.map(h=>{
                 const mExps=data.expenses.filter(e=>e.date.startsWith(h.key)&&!e.isIncome);
                 const excedido=data.categories.reduce((s,cat)=>{
-                  const bud=catBud(cat); if(bud<=0) return s;
+                  const bud=catBud(cat, h.key); if(bud<=0) return s;
                   const sp=mExps.filter(e=>e.catId===cat.id).reduce((ss,e)=>ss+e.amount,0);
                   return sp>bud?s+(sp-bud):s;
                 },0);
@@ -722,7 +760,7 @@ function App() {
                 const totAhorro=annual12.reduce((s,h)=>s+h.ahorro,0);
                 const totExc=annual12.reduce((s,h)=>{
                   const mExps2=data.expenses.filter(e=>e.date.startsWith(h.key)&&!e.isIncome);
-                  return s+data.categories.reduce((ss,cat)=>{const bud=catBud(cat);if(bud<=0)return ss;const sp=mExps2.filter(e=>e.catId===cat.id).reduce((sss,e)=>sss+e.amount,0);return sp>bud?ss+(sp-bud):ss;},0);
+                  return s+data.categories.reduce((ss,cat)=>{const bud=catBud(cat,h.key);if(bud<=0)return ss;const sp=mExps2.filter(e=>e.catId===cat.id).reduce((sss,e)=>sss+e.amount,0);return sp>bud?ss+(sp-bud):ss;},0);
                 },0);
                 return(
                   <div style={{display:"grid",gridTemplateColumns:"0.7fr 1fr 1fr 1fr",gap:4,padding:"10px 8px",marginTop:8,background:C.accentBg,borderRadius:12,border:`1px solid ${C.accent}44`}}>
@@ -822,15 +860,15 @@ function App() {
               <div style={{padding:"0 16px 4px"}}>
                 <div style={{color:C.t3,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:9}}>Ítems de presupuesto</div>
                 {(activeCat.items||[]).map(item=>{
-                  const iSp=itemSpent(item.id),iRem=(item.budget||0)-iSp;
+                  const iSp=itemSpent(item.id),iBud=getItemBudget(item,mk),iRem=iBud-iSp;
                   return(
                     <div key={item.id} style={{background:C.card,borderRadius:14,padding:"12px 14px",marginBottom:8,border:`1px solid ${C.border}`,boxShadow:C.shadowSm}}>
-                      <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:item.budget>0?9:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:iBud>0?9:0}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0}}/>
-                        <div style={{flex:1}}><div style={{color:C.t1,fontWeight:600,fontSize:13}}>{item.name}</div>{item.budget>0&&<div style={{color:C.t3,fontSize:11,marginTop:1}}>Presupuesto: ${fmt(item.budget)}</div>}</div>
-                        <div style={{textAlign:"right"}}><div style={{color:C.t1,fontWeight:700,fontSize:14}}>${fmt(iSp)}</div>{item.budget>0&&<div style={{color:iRem>=0?C.green:C.red,fontSize:11,fontWeight:600,marginTop:1}}>{iRem>=0?`$${fmt(iRem)} rest.`:`$${fmt(Math.abs(iRem))} excedido`}</div>}</div>
+                        <div style={{flex:1}}><div style={{color:C.t1,fontWeight:600,fontSize:13}}>{item.name}</div>{iBud>0&&<div style={{color:C.t3,fontSize:11,marginTop:1}}>Presupuesto: ${fmt(iBud)}</div>}</div>
+                        <div style={{textAlign:"right"}}><div style={{color:C.t1,fontWeight:700,fontSize:14}}>${fmt(iSp)}</div>{iBud>0&&<div style={{color:iRem>=0?C.green:C.red,fontSize:11,fontWeight:600,marginTop:1}}>{iRem>=0?`$${fmt(iRem)} rest.`:`$${fmt(Math.abs(iRem))} excedido`}</div>}</div>
                       </div>
-                      {item.budget>0&&<Bar spent={iSp} budget={item.budget} color={col}/>}
+                      {iBud>0&&<Bar spent={iSp} budget={iBud} color={col}/>}
                     </div>
                   );
                 })}
